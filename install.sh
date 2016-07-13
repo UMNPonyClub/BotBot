@@ -65,15 +65,8 @@ done
 
 # Installation Functions
 
-
-#===================================================
-#----------------Install conda ---------------------
-#===================================================
-
 function setup_shared_space {
-    #===================================================
-    #----------Setup the build Environment--------------
-    #===================================================
+    # Sets up the shared Environment
     echo "Setting up the build environment"
     if [ ! -f $BASE/.bashrc ]; then
         touch $BASE/.bashrc
@@ -87,6 +80,8 @@ function setup_shared_space {
 }
 
 function install_conda {
+    # Downloads and installs Miniconda, then
+    # creates a shared virtual python environment
     if [ ! -e $BASE/conda/bin/conda ]
     then
         green "Downloading conda"
@@ -113,14 +108,17 @@ function install_conda {
         conda install --no-update-deps -y -n $NAME -c http://conda.anaconda.org/cpcloud ipdb
     elif [ $VERBOSE = true ]
     then
-        green 'PonyClub Virtual Environment already installed'
+        green 'botbot Virtual Environment already installed'
     fi
 }
 
 
 function append_shared_bashrc {
+    # Appends a command to execute the shared bashrc to the users
+    # .bashrc script if the command is not already there
     if [ $(cat ~/.bashrc | grep "source $BASE/.bashrc" | wc -l) -ne 1 ]; then 
         echo "source $BASE/.bashrc" >> ~/.bashrc
+        red "Reload your bashrc or open a new shell to continue"
     fi;
 }
 
@@ -139,5 +137,7 @@ function install-botbot {
     pip install -e $SOURCE_DIR
 }
 
+append_shared_bashrc
 setup_shared_space
 install_conda
+

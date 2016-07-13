@@ -16,16 +16,35 @@ def db_exists():
     """Check if the database already exists"""
     return os.path.isfile(get_dbpath())
 
+
+def serialize_problems(fi):
+    """Turn a set of problems in a FileInfo dict into a string"""
+    probset = fi['problems']
+    if probset is not None:
+        fi['problems'] = ','.join(probset)
+    else:
+        fi['problems'] = ''
+
+def decode_problems(fi):
+    """Turn a string of problems in a fresh SQL fileinfo to a set"""
+    probstr = fi['problems']
+    if len(probstr) > 0:
+        fi['problems'] = set(probstr.split(','))
+    else:
+        fi['problems'] = set()
+
 class FileDatabase:
     """Database of files and associate information"""
     def __init__(self, dbpath):
+        # Dict keys that are the column names
         self.fi_keys = ['path', 'mode', 'uid', 'username',
                         'size', 'lastmod', 'lastcheck', 'isfile',
                         'isdir', 'important', 'problems']
-
         self.conn = sqlite3.connect(dbpath)
+        self.conn.row_factory = sqlite3.Row
         self.curs = self.conn.cursor()
         try:
+            # Create the file table
             self.curs.execute(
                 'create table files\
                 (path text primary key,\
@@ -38,22 +57,32 @@ class FileDatabase:
                 isfile integer,\
                 isdir integer,\
                 important integer,\
+                md5sum text,\
                 problems text)'  # Problems are stored in the
                                  # database# as comma-separated
                                  # problem identifier strings. yee
             )
         except sqlite3.OperationalError:
+            # Table already exists, ya goof
             pass
 
         self.conn.commit()
 
-    def store_file_problems(self, checked):
+    def _prep_fileinfos(self, rows):
+        files = [dict(r) for r in rows]
+        for fi in files:
+            decode_problems(fi)
+
+        return files
+
+    def store_file_problems(self, *checked):
         """Store a list of FileInfos with their problems in the database"""
+
+        # Copy the list
         mod = list(checked)
         for fi in mod:
             try:
-                problemstr = ','.join(fi['problems'])
-                fi['problems'] = problemstr
+                serialize_problems(fi)
             except KeyError:
                 pass
 
@@ -69,6 +98,7 @@ class FileDatabase:
             :isfile,\
             :isdir,\
             :important,\
+            :md5sum,\
             :problems\
             )',
             mod
@@ -84,16 +114,22 @@ class FileDatabase:
         probs = self.curs.fetchone()['problems'].split(',')
         return set(probs)
 
-    def get_cached_filelist(self, path):
+    def get_cached_filelist(self, path, uid=None):
         """Get a list of FileInfo dictionaries from the database"""
-        self.curs.execute(
-            'select * from files where path like ?',
-            (path + '%',)
-        )
-        files = self.curs.fetchall()
-        return [dict(zip(self.fi_keys, d)) for d in files]
+        query = 'select * from files where path like ?'
+        args = [path + '%']
+        if uid:
+            query += ' and uid = ?'
+            args += [uid]
 
-    def get_files_by_attribute(self, path, attr):
+        self.curs.execute(
+            query,
+            args
+        )
+
+        return self._prep_fileinfos(self.curs.fetchall())
+
+    def get_files_by_attribute(self, path, attr, shared=True):
         """
         Get a dictionary where keys are values of attr and values are lists
         of files with that attribute
@@ -106,17 +142,27 @@ class FileDatabase:
 
         attrlists = []
         for val in attrvals:
-            attrlists.append([f for f in filelist if f[attr] == val])
+            if attr == 'problems':
+                attrlists.append([f for f in filelist if val in f[attr]])
+            else:
+                attrlists.append([f for f in filelist if f[attr] == val])
 
         return dict(zip(attrvals, attrlists))
 
-    def prune(self, old):
+    def prune(self, *old):
         """Remove db entries based on the FileInfos supplied in old"""
         for f in old:
-            self.curs.execute(
-                'delete from files where path=?',
-                (f['path'],)
-            )
+            try:
+                self.curs.execute(
+                    'delete from files where path=?',
+                    (f['path'],)
+                )
+            except TypeError:
+                # Handle raw paths too
+                self.curs.execute(
+                    'delete from files where path=?',
+                    (f,)
+                )
 
     def __del__(self):
         """Close everything before ya die"""

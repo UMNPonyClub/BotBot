@@ -2,8 +2,11 @@
 import argparse
 import sys
 
-import botbot
-from . import checks, schecks, checker, config, sqlcache
+from botbot import __version__
+from . import checks, schecks, checker, sqlcache
+from . import ignore as ig
+from . import daemon
+from . import config
 
 def main():
     parser = argparse.ArgumentParser(description="Manage lab computational resources.")
@@ -16,9 +19,22 @@ def main():
     parser.add_argument('-o', '--out',
                         help='Print the report to a file',
                         action='store')
+    parser.add_argument('-f', '--format',
+                        help='Specify the output format',
+                        action='store',
+                        default='generic')
     parser.add_argument('--version',
                         action='version',
-                        version='%(prog)s {}'.format(botbot.__version__))
+                        version='%(prog)s {}'.format(__version__))
+
+    # Recheck options
+    recheck = parser.add_mutually_exclusive_group()
+    recheck.add_argument('-c', '--cached',
+                        action='store_true',
+                        help='Only return cached issues (no recheck)')
+    recheck.add_argument('-k', '--force-recheck',
+                        action='store_true',
+                        help='Force a recheck of the tree')
 
     # Directory options
     parser.add_argument('path',
@@ -30,27 +46,55 @@ def main():
     parser.add_argument('-l', '--follow-symlinks',
                         help='Follow symlinks',
                         action='store_true')
+    parser.add_argument('-m', '--me',
+                        help='Only check files that belong to you',
+                        action='store_true')
+
+    # Daemon options
+    parser.add_argument('-d', '--daemon',
+                        help='Run as a daemon',
+                        action='store_true')
+
     # Initialize the checker
     args = parser.parse_args()
 
+    # Determine if we should write to a file or to stdout. If a file
+    # argument isn't given, default to stdout.
     out = None
     if args.out is not None:
         out = args.out
     else:
         out = sys.stdout
 
-    c = checker.Checker(out, sqlcache.get_dbpath())
-    clist = [checks.is_fastq,
+    # Give a list of checking functions to the Checker object so we
+    # can go hog-wild with checks.
+    clist = (checks.is_fastq,
              checks.sam_should_compress,
-             checks.is_large_plaintext]
+             checks.is_large_plaintext,
+             schecks.file_groupreadable,
+             schecks.file_group_executable,
+             schecks.dir_group_readable)
 
-    if args.shared:
-        clist += [schecks.file_groupreadable,
-                  schecks.file_group_executable,
-                  schecks.dir_group_readable]
-    c.register(*clist)
+    if args.daemon:
+        c = daemon.DaemonizedChecker(args.path)
+        c.register(*clist)
+        c.init((c.check_file, daemon._RECHECK_MASK),
+               (c.db.prune, daemon._PRUNE_MASK))
+        c.run()
+    else:
+        c = checker.OneshotChecker(out, sqlcache.get_dbpath())
+        c.register(*clist)
 
-    conf = config.read_config()
+    # Get ignore rules from ~/.botbotignore
+    ignore = ig.parse_ignore_rules(ig.find_ignore_file())
 
     # Check the given directory
-    c.check_all(args.path, link=args.follow_symlinks, verbose=args.verbose)
+    c.check_all(args.path,
+                cached=args.cached,
+                force=args.force_recheck,
+                shared=args.shared,
+                link=args.follow_symlinks,
+                verbose=args.verbose,
+                fmt=args.format,
+                ignore=ignore,
+                me=args.me)

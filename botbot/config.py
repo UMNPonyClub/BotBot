@@ -22,5 +22,8 @@ def read_config():
 
     from configparser import ConfigParser
     cfg = ConfigParser()
-    cfg.read(CONFIG_FILE_PATH)
-    return dict(cfg)
+    if os.path.exists(CONFIG_FILE_PATH):
+        cfg.read(CONFIG_FILE_PATH)
+    return cfg
+
+CONFIG = read_config()

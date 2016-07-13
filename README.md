@@ -1,5 +1,6 @@
 # BotBot
 [![Build Status](https://travis-ci.org/jackstanek/BotBot.svg?branch=master)](https://travis-ci.org/jackstanek/BotBot)
+[![Coverage Status](https://coveralls.io/repos/github/jackstanek/BotBot/badge.svg?branch=master)](https://coveralls.io/github/jackstanek/BotBot?branch=master)
 
 A manager for lab computational resources.
 
@@ -13,12 +14,6 @@ A manager for lab computational resources.
 
 # Installation
 
-## Automatic
-
-Pretty simple:
-
-```pip install botbot```
-
 ## Manual
 
 If you want the latest and greatest development code, go ahead and
@@ -27,13 +22,26 @@ clone this repo:
 ```
 git clone https://github.com/jackstanek/BotBot.git
 cd BotBot
-python setup.py install
 ```
+
+then run
+
+```
+pip install -r requirements.txt
+```
+
+If you want to run the test suite as well, you'll need to run
+
+```
+pip install -r test_requirements.txt
+```
+
+To run the test suite just run `py.test` in the project directory.
 
 # Configuration
 
 BotBot uses 2 primary configuration files: `~/.botbotignore` and
-`~/.botbot.conf`.
+`~/.botbot/botbot.conf`.
 
 ## `.botbotignore`
 
@@ -44,11 +52,34 @@ Python built-in [`glob`](https://docs.python.org/3/library/glob.html)
 module. Anything after a `#` character will be ignored, so these can
 be used to add comments.
 
-## `.botbot.conf`
+## `.botbot/botbot.conf`
 
-Configuration variables are stored here. Note that most of the
-configuration options are very much under development and are not
-ready for production yet. More to come!
+Configuration variables are stored here. The file is an .ini-style
+configuration formatted file. The variables are stored in sections as
+follows:
+
+- `[checks]`
+    - `oldage`: defines how many days old a file must be to be
+      considered "old".
+
+    - `largesize`: defines how many bytes large a file must be to be
+      considered "large".
+
+- `[fileinfo]`
+    - `important`: defines which file extensions are considered
+      "important." By default, *.sam and *.bam files are denoted as
+      important.
+
+- `[email]` (REQUIRED for email mode)
+    - `domain`: the domain that the users' email accounts are on
+    - `email`: your email address (which emails are sent from)
+    - `password`: your email password
+    - `smtp_server`: the SMTP server you will send from
+    - `smtp_port`: the port the SMTP server uses (probably 587, check
+      with your server administrator or documentation)
+    - `grace_period`: amount of time, in minutes, after changing a
+      file that a user can fix potential issues before receiving an
+      email about said changes
 
 # Testing
 

@@ -1,8 +1,45 @@
 """File information"""
 import os
-import time
 import pwd
-import stat
+import hashlib
+
+from .config import CONFIG
+
+def _reader(fo):
+    """Generator which feeds bytes to the md5 hasher"""
+    while True:
+        b = fo.read(4096)
+        if len(b) > 0:
+            yield b
+        else:
+            raise StopIteration()
+
+def _hash(fo):
+    """Hash a file object"""
+    hasher = hashlib.new('md5')
+    for b in _reader(fo):
+            hasher.update(b)
+
+    digest = hasher.hexdigest()
+    return digest
+
+
+def get_file_hash(path):
+    """Get md5 hash of a file"""
+    try:
+        with open(path, mode='br') as infile:
+            return _hash(infile)
+    except PermissionError:
+        return ''
+
+def get_important_hash(path):
+    ext = os.path.splitext(path)[1]
+    if os.path.isdir(path):
+        return ''
+    if ext == '.sam' or ext == '.bam':
+        return get_file_hash(path)
+    else:
+        return ''
 
 def FileInfo(fd, link=False, important=False):
     """Hold information about a file"""
@@ -17,6 +54,8 @@ def FileInfo(fd, link=False, important=False):
         'lastcheck': 0,
         'isfile': os.path.isfile(fd),
         'isdir': not os.path.isfile(fd),
-        'important': important,
+        'important': os.path.splitext(fd)[1].strip('.') in CONFIG.get('fileinfo', 'important',
+                                                                      fallback='.sam, .bam'),
+        'md5sum': get_important_hash(fd),
         'problems': set()
     }

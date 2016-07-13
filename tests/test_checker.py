@@ -1,19 +1,32 @@
 import os
 import sys
 import stat
+from random import randint, choice
+from string import ascii_letters
 
 import pytest
 
 from botbot import checker, problems, checks, fileinfo
 
-# Tests for Checker class methods
+def create_random_directory_tree(ic, directory):
+    """Create a directory tree with ic files in it (files and directories)"""
+    dp = directory
+    while ic:
+        name = ''.join(choice(ascii_letters) for _ in range(10))
+        if not randint(0, 3): # Make a file
+            dp.ensure(name)
+            ic -= 1
+        else:
+            dp = dp.mkdir(name)
+
+# Tests for Checkern class methods
 def test_checker_register_accept_single_function(tmpdir):
-    c = checker.Checker(sys.stdout, tmpdir.join('test.db').strpath)
+    c = checker.OneshotChecker(sys.stdout, tmpdir.join('test.db').strpath)
     c.register(lambda: print("Hello world!"))
     assert len(c.checks) == 1
 
 def test_checker_register_accept_function_list(tmpdir):
-    c = checker.Checker(sys.stdout, tmpdir.join('test.db').strpath)
+    c = checker.OneshotChecker(sys.stdout, tmpdir.join('test.db').strpath)
 
     # Function list
     f = list()
@@ -21,6 +34,50 @@ def test_checker_register_accept_function_list(tmpdir):
     f.append(lambda i : i + i)
     c.register(*f)
     assert len(c.checks) == 2
+
+def test_oneshotchecker_checked_file_processing(tmpdir):
+    c = checker.OneshotChecker(sys.stdout, tmpdir.join('test.db').strpath)
+    assert len(c.checked) == 0
+
+    c.process_checked_file({
+        "problems": {}
+    })
+    assert len(c.checked) == 1
+
+def test_oneshotchecker_finds_all_files(tmpdir):
+    c = checker.OneshotChecker(sys.stdout, tmpdir.join('test.db').strpath)
+
+    for i in range(10, 20):
+        tdir = tmpdir.mkdir(str(i))
+        create_random_directory_tree(i, tdir)
+        c.build_new_checklist(tdir.strpath, verbose=False)
+        assert len(c.checklist) == i
+
+def test_oneshot_checker_populate_list_empty_db(tmpdir):
+    _TMPDIR_CT = 20
+    td = tmpdir.mkdir('doot')
+    create_random_directory_tree(_TMPDIR_CT, td)
+
+    c = checker.OneshotChecker(sys.stdout, tmpdir.join('test.db').strpath)
+    c.populate_checklist(td.strpath)
+
+    assert c.checklist
+
+def test_oneshot_checker_update_list_with_entries(tmpdir):
+    _TMPDIR_CT = 20
+    td = tmpdir.mkdir('doot')
+    tf = td.join('test.txt').ensure()
+
+    c = checker.OneshotChecker(sys.stdout, tmpdir.join('test.db').strpath)
+    files = [fileinfo.FileInfo(tf.strpath)]
+    c.db.store_file_problems(*files)
+
+    c.update_checklist(files)
+
+    assert c.checklist
+
+def test_oneshot_checker_populate_list_with_non_empty_db(tmpdir):
+    pass
 
 # Tests for checking functions
 
@@ -89,3 +146,21 @@ def test_sam_and_bam_detection(tmpdir):
     assert checks.sam_should_compress(bami) is 'PROB_SAM_AND_BAM_EXIST'
 
     prev.chdir()
+
+def test_is_large_plaintext_affirmative():
+    fi = {
+        'path': 'test.txt',
+        'lastmod': 0,
+        'size': 1000000000000000,
+    }
+    result = checks.is_large_plaintext(fi)
+    assert result == 'PROB_OLD_LARGE_PLAINTEXT'
+
+def test_is_large_plaintext_negatory():
+    fi = {
+        'path': 'bad.sam',
+        'lastmod': 2 ** 32, # This test will work until 2038
+        'size': 100
+    }
+    result = checks.is_large_plaintext(fi)
+    assert not result

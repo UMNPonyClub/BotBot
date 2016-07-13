@@ -9,10 +9,12 @@ from jinja2 import Environment, FileSystemLoader
 
 from . import problems
 
-class Reporter():
-    def __init__(self, chkr, out=sys.stdout):
+_DEFAULT_RES_PATH = os.path.join('resources', 'templates')
+_GENERIC_REPORT_NAME = 'generic.txt'
+
+class ReporterBase():
+    def __init__(self, chkr):
         self.chkr = chkr
-        self.out = out
 
     def write_status(self, barlen):
         """Write where we're at"""
@@ -26,46 +28,124 @@ class Reporter():
             print('\n', end='')
         sys.stdout.flush()
 
-    def get_template_filename(self, name):
+    def _get_template_filename(self, name):
+        """Find the filename of a template. Can be a filename or just a name."""
         parts = str(name).split('.')
         if parts[len(parts) - 1] == 'txt':
             return name
         else:
             return '.'.join(parts + ['txt'])
 
-    def write_report(self, fmt, attr='problems'):
-        """Write the summary of what transpired."""
-        tmpname = self.get_template_filename(fmt)
-        tmp_respath = os.path.join('resources', 'templates')
-        if resource_exists(__package__, tmp_respath):
-            env = Environment(
-                loader=FileSystemLoader(resource_filename(__package__, tmp_respath)),
+    def write_report(self, fmt, shared, attr='problems'):
+        """Write a report. This base is just a stub."""
+        pass
+
+    def _get_env(self, template):
+        tmppath = os.path.join(_DEFAULT_RES_PATH,
+                               self._get_template_filename(template))
+        if resource_exists(__package__, tmppath):
+            return Environment(
+                loader=FileSystemLoader(resource_filename(__package__, _DEFAULT_RES_PATH)),
                 trim_blocks=True
             )
+        else:
+            raise FileNotFoundError('No such template')
 
-            if self.chkr.status['probcount'] > 0:
-                filelist = self.chkr.db.get_files_by_attribute(self.chkr.path, attr)
-                tempgen = env.get_template(tmpname).generate({
-                    'attr': attr,
-                    'values': filelist,
-                    'status': self.chkr.status
-                })
+class OneshotReporter(ReporterBase):
+    """Does one-off reports after one-off checks"""
+    def __init__(self, chkr, out=sys.stdout):
+        super().__init__(chkr)
+        self.out = out
 
-                if self.out != sys.stdout:
-                    print('Writing report to {}.'.format(self.out))
-                    out = open(self.out, mode='w')
-                else:
-                    print('Report:')
-                    out = sys.stdout
+    def write_report(self, fmt, shared, attr='problems'):
+        """Write the summary of what transpired."""
+        filelist = self.chkr.db.get_files_by_attribute(self.chkr.path, attr, shared=shared)
 
-                for line in tempgen:
-                    print(line, file=out, end='')
+        # Prune unwanted listings
+        filelist = prune_empty_listings(filelist, attr)
+        if not shared:
+            filelist = prune_shared_probs(filelist, attr)
 
-                print('\n', file=out, end='')
-                out.close()
+        if should_print_report(filelist):
+            env = self._get_env(_GENERIC_REPORT_NAME)
 
+            tempgen = env.get_template(_GENERIC_REPORT_NAME).generate({
+                'attr': attr,
+                'values': filelist,
+                'status': self.chkr.status
+            })
+
+            if self.out != sys.stdout:
+                print('Writing report to {}.'.format(self.out))
+                out = open(self.out, mode='w')
             else:
-                print('No problems here!')
+                print('Report:')
+                out = sys.stdout
+
+            for line in tempgen:
+                print(line, file=out, end='')
+
+            print('\n', file=out, end='')
+            out.close()
 
         else:
-            raise FileNotFoundError('No such report format')
+            print('No problems here!')
+
+def prune_shared_probs(fl, attr):
+    """Remove shared problem listings"""
+    shared_probs = ('PROB_DIR_NOT_WRITABLE',
+                    'PROB_FILE_NOT_GRPRD',
+                    'PROB_FILE_NOT_GRPEXEC',
+                    'PROB_DIR_NOT_WRITABLE',
+                    'PROB_DIR_NOT_ACCESSIBLE')
+    pruned = dict()
+    if attr == 'problems':
+        for key, val in fl.items():
+            if key not in shared_probs:
+                pruned[key] = val
+    else:
+        for key, val in fl.items():
+            pruned[key] = []
+            for fi in val:
+                sps, fips = set(shared_probs), set(fi['problems'])
+
+                spc = len(set.intersection(sps, fips))
+                if spc != len(fips):
+                    pruned[key].append(fi)
+    return pruned
+
+def prune_empty_listings(fl, attr):
+    """Return a new dictionary with empty listings removed"""
+
+    new = dict()
+    if attr == 'problems':
+        for key, value in fl.items():
+            if len(value) > 0:
+                new[key] = value
+    else:
+        for key, val in fl.items():
+            for fi in val:
+                if len(fi['problems']) > 0:
+                    if key in new:
+                        new[key].append(fi)
+                    else:
+                        new[key] = [fi]
+
+    return new
+
+def should_print_report(filelist):
+    for values in filelist.values():
+        if len(values) > 0:
+            return True
+    return False
+
+class DaemonReporter(ReporterBase):
+    """Reports issues in daemon mode"""
+    def __init__(self, chkr):
+        super().__init__(chkr)
+
+    def write_report(self):
+        queue = self.chkr.checked
+        while queue:
+            finfo = queue.pop()
+            print("{} -- {}".format(finfo['path'], ', '.join(finfo['problems'])))

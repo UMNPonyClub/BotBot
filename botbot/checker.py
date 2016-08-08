@@ -77,33 +77,26 @@ class OneshotChecker(CheckerBase):
         """
         Build a list of files to check. If link is True, follow symlinks.
         """
+
+        # Try to clear out the FileInfo cache
+        self.db.clear()
+
         self.path = path
         to_add = [path] # Acts like a stack, this does
 
         checklist = []
 
         while len(to_add) > 0:
-            try:
-                apath = fi.FileInfo(to_add.pop(), link=link)
-                # If this path is a directory, push all files and
-                # subdirectories to the stack
-                if uid is None or uid == apath['uid']:
-                    if apath['isdir']:
-                        new = [os.path.join(apath['path'], f) for f in os.listdir(apath['path'])]
-                        to_add.extend(new)
-                    else:
-                        # Otherwise just add that file to the checklist
-                        checklist.append(apath)
-
-            except PermissionError:
-                # We couldn't read the file or directory because
-                # permissions were wrong
-                apath['problems'] = {'PROB_DIR_NOT_ACCESSIBLE'}
-                self.checked.append(apath)
-            except OSError:
-                # Probably a dangling link
-                apath['problems'] = {'PROB_BROKEN_LINK'}
-                self.checked.append(apath)
+            apath = fi.FileInfo(to_add.pop(), link=link)
+            # If this path is a directory, push all files and
+            # subdirectories to the stack
+            if uid is None or uid == apath['uid']:
+                if apath['isdir'] and not 'PROB_FILE_NOT_GRPRD' in apath['problems']:
+                    new = [os.path.join(apath['path'], f) for f in os.listdir(apath['path'])]
+                    to_add.extend(new)
+                else:
+                    # Otherwise just add that file to the checklist
+                    checklist.append(apath)
 
         # Update checker records
         self.checklist = checklist
@@ -199,8 +192,8 @@ class OneshotChecker(CheckerBase):
         starttime = time.time()
 
         # Munge that path boys!
-        path = os.path.abspath(path)
         path = os.path.expanduser(path)
+        path = os.path.abspath(path)
         self.path = path
 
         # If no cached tree exists, (or if we explicitly want to build

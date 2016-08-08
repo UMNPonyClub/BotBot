@@ -11,6 +11,7 @@ from . import problems
 
 _DEFAULT_RES_PATH = os.path.join('resources', 'templates')
 _GENERIC_REPORT_NAME = 'generic.txt'
+_ENV_REPORT_NAME = 'env.txt'
 
 class ReporterBase():
     def __init__(self, chkr):
@@ -36,6 +37,9 @@ class ReporterBase():
         else:
             return '.'.join(parts + ['txt'])
 
+    def _get_supporting_prob_info(self, probid):
+        return problems.every_problem.get(probid)
+
     def write_report(self, fmt, shared, attr='problems'):
         """Write a report. This base is just a stub."""
         pass
@@ -57,6 +61,12 @@ class OneshotReporter(ReporterBase):
         super().__init__(chkr)
         self.out = out
 
+    def _should_print_report(self, filelist):
+        for values in filelist.values():
+            if len(values) > 0:
+                return True
+        return False
+
     def write_report(self, fmt, shared, attr='problems'):
         """Write the summary of what transpired."""
         filelist = self.chkr.db.get_files_by_attribute(self.chkr.path, attr, shared=shared)
@@ -66,7 +76,7 @@ class OneshotReporter(ReporterBase):
         if not shared:
             filelist = prune_shared_probs(filelist, attr)
 
-        if should_print_report(filelist):
+        if self._should_print_report(filelist):
             env = self._get_env(_GENERIC_REPORT_NAME)
 
             tempgen = env.get_template(_GENERIC_REPORT_NAME).generate({
@@ -112,6 +122,7 @@ def prune_shared_probs(fl, attr):
                 spc = len(set.intersection(sps, fips))
                 if spc != len(fips):
                     pruned[key].append(fi)
+
     return pruned
 
 def prune_empty_listings(fl, attr):
@@ -133,19 +144,52 @@ def prune_empty_listings(fl, attr):
 
     return new
 
-def should_print_report(filelist):
-    for values in filelist.values():
-        if len(values) > 0:
-            return True
-    return False
-
 class DaemonReporter(ReporterBase):
     """Reports issues in daemon mode"""
     def __init__(self, chkr):
         super().__init__(chkr)
 
     def write_report(self):
+        """
+        Continuously report. (Note: this implementation is temporary until
+        email gets working.)
+        """
+        #TODO: implement emailing!
+
         queue = self.chkr.checked
         while queue:
             finfo = queue.pop()
             print("{} -- {}".format(finfo['path'], ', '.join(finfo['problems'])))
+
+class EnvReporter(ReporterBase):
+    """Reports environment issues"""
+    def __init__(self, chkr, out=sys.stdout):
+        """Constructor for the EnvReporter"""
+        self.out = out
+        self.chkr = chkr
+
+    def write_report(self):
+        """Write a report on environment variables"""
+        env = self._get_env(_ENV_REPORT_NAME)
+
+        if self.chkr.problems:
+            tempgen = env.get_template(_ENV_REPORT_NAME).generate(
+                problist=[(self._get_supporting_prob_info(p[0]), p[1])
+                          for p in self.chkr.problems]
+            )
+
+            if self.out != sys.stdout:
+                print('Writing report to {}.'.format(self.out))
+                out = open(self.out, mode='w')
+            else:
+                print('Report:')
+                out = sys.stdout
+
+            for line in tempgen:
+                print(line, file=out, end='')
+
+            print('\n', file=out, end='')
+            out.close()
+
+        else:
+            print('No problems here!')

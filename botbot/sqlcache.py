@@ -3,6 +3,8 @@
 import os
 import sqlite3
 
+from time import time
+
 from .problems import every_problem
 
 def get_dbpath():
@@ -43,25 +45,10 @@ class FileDatabase:
         self.conn = sqlite3.connect(dbpath)
         self.conn.row_factory = sqlite3.Row
         self.curs = self.conn.cursor()
+
         try:
-            # Create the file table
-            self.curs.execute(
-                'create table files\
-                (path text primary key,\
-                mode integer,\
-                uid integer,\
-                username text,\
-                size integer,\
-                lastmod float,\
-                lastcheck float,\
-                isfile integer,\
-                isdir integer,\
-                important integer,\
-                md5sum text,\
-                problems text)'  # Problems are stored in the
-                                 # database# as comma-separated
-                                 # problem identifier strings. yee
-            )
+            self._create_table()
+
         except sqlite3.OperationalError:
             # Table already exists, ya goof
             pass
@@ -74,6 +61,26 @@ class FileDatabase:
             decode_problems(fi)
 
         return files
+
+    def _create_table(self):
+        # Create the file table
+        self.curs.execute(
+            'create table files\
+            (path text primary key,\
+            mode integer,\
+            uid integer,\
+            username text,\
+            size integer,\
+            lastmod float,\
+            lastcheck float,\
+            isfile integer,\
+            isdir integer,\
+            important integer,\
+            md5sum text,\
+            problems text)'  # Problems are stored in the
+                             # database# as comma-separated
+                             # problem identifier strings. yee
+        )
 
     def store_file_problems(self, *checked):
         """Store a list of FileInfos with their problems in the database"""
@@ -149,6 +156,18 @@ class FileDatabase:
 
         return dict(zip(attrvals, attrlists))
 
+    def get_files_after_grace_period(self, graceperiod=10):
+        """
+        Get files which have problems and haven't been fixed within the
+        grace period.
+        """
+        self.curs.execute(
+            'select * from files where lastcheck < ? and problems like \'%PROB%\'',
+            (time() - graceperiod * 60,)
+        )
+
+        return self._prep_fileinfos(self.curs.fetchall())
+
     def prune(self, *old):
         """Remove db entries based on the FileInfos supplied in old"""
         for f in old:
@@ -163,6 +182,14 @@ class FileDatabase:
                     'delete from files where path=?',
                     (f,)
                 )
+
+    def clear(self):
+        try:
+            self.curs.execute('drop table files')
+            self._create_table()
+
+        except sqlite3.OperationalError:
+            pass
 
     def __del__(self):
         """Close everything before ya die"""

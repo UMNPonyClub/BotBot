@@ -1,143 +1,199 @@
 #!/bin/bash
+# Script to set up botbot.
+# Written by Jack Stanek and Rob Schaefer.
 
-# Usage function
-function usage(){
-cat <<EOF
-    Usage: $0 [flags]
-    Flags
-    -----
-    -h | --help
-        print help message
-    -b | --base
-        Base installation directory for camoco (default: ~/.camoco).
-    -v | --verbose
-        Turn verbosity on.
+NAME='BotBot'
+BASE="$HOME/.botbot"
+CWD=`pwd`
+INSTALL_TEST_SUITE=0
+
+function usage()
+{
+    cat <<EOF
+Usage: $0 [flags]
+
+Flags
+-----
+-b | Set the base install directory for botbot.
+-h | Print this help message.
+-t | Install test suite as well.
 EOF
-exit 0
+    exit 0
 }
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-NC='\033[0m'
+function color()
+{
+    local RED='\033[1;31m'
+    local GREEN='\033[1;32m'
+    local NC='\033[0m'
 
-function log(){
-    if [ $VERBOSE==true ]
-    then
-        printf "$1"
+    case "$1" in
+        1) echo -e "$RED$2$NC"
+           ;;
+        2) echo -e "$GREEN$2$NC"
+           ;;
+    esac
+}
+
+function red()
+{
+    color 1 "$1"
+}
+
+function green()
+{
+    color 2 "$1"
+}
+
+function parse-args()
+{
+    while [[ $# -gt 0 ]]
+    do
+        local key="$1"
+        case $key in
+            "-h"|"--help")
+                usage
+                shift
+                exit
+                ;;
+            "-b"|"--base")
+                BASE=$2
+                shift
+                ;;
+            "-t"|"--tests")
+                INSTALL_TEST_SUITE=1
+                shift
+                ;;
+            *)
+                usage
+                exit 1
+                ;;
+        esac
+    done
+}
+
+function install-conda-by-hand()
+{
+    CONDA_INSTALL_LOCAL=1
+
+    cd $BASE
+    mkdir conda
+
+    wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh &&
+    bash miniconda.sh -b -f -p $BASE/conda &&
+    rm -f miniconda.sh
+
+    green "Installed conda at $BASE..."
+
+    cd $CWD
+
+    local PATH_PREFIX='PATH=$PATH:'
+    local NEW_PATH="$BASE/conda/bin"
+    echo "$PATH_PREFIX$NEW_PATH" > setenv.sh
+    source setenv.sh
+}
+
+function check-conda-install()
+{
+    CONDA=`command -v conda`
+
+    if [[ -z $CONDA ]]; then
+        red "conda is not installed. Attempting to install..."
+        echo "Note: if you do not have sudo privileges, conda will be installed locally."
+        sudo pip install conda
+        local _conda_install_result=$?
+
+        if [[ $_conda_install_result -ne 0 ]]; then
+            red "Could not install conda using pip. Attempting to install in $BASE..."
+
+            install-conda-by-hand
+        else
+            green "Successfully installed conda..."
+        fi
+    else
+        green "Using conda install found at $CONDA..."
     fi
 }
 
-function red(){
-    printf "${RED}$1${NC}\n"
-}
-function green(){
-    printf "${GREEN}$1${NC}\n"
-}
+function make-conda-env()
+{
+    echo "Making conda environment with name $NAME..."
+    conda remove -y --name $NAME --all ||
+        (red "An environment named $NAME already exists, but could not be removed..." &&
+                exit 1)
 
-# Command Line Argument Processing
-SOURCE_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-BASE="/home/mccuem/shared/.local"
-NAME='botbot'
-VERBOSE=false
+    conda create -y -n $NAME python==3.5 pip setuptools ||
+        (red "Could not create environment $NAME..."
+         exit 1)
 
-while [[ $# > 0 ]]
-do
-key="$1"
-case $key in 
-    -h|--help)
-    usage
-    shift
-    ;;
-    -b|--base)
-    BASE=$2
-    shift
-    ;;
-    -v|--verbose)
-    VERBOSE=true
-    shirt
-    ;;
-    *)  
-        #unknown options
-    ;;
-esac
-shift
-done
-
-# Installation Functions
-
-function setup_shared_space {
-    # Sets up the shared Environment
-    echo "Setting up the build environment"
-    if [ ! -f $BASE/.bashrc ]; then
-        touch $BASE/.bashrc
-    fi 
-    source $BASE/.bashrc
-    mkdir -p $BASE
-    mkdir -p $BASE/conda
-    mkdir -p $BASE/bin 
-    mkdir -p $BASE/lib 
-
+    green "Created conda environment $NAME..."
 }
 
-function install_conda {
-    # Downloads and installs Miniconda, then
-    # creates a shared virtual python environment
-    if [ ! -e $BASE/conda/bin/conda ]
-    then
-        green "Downloading conda"
-        cd $BASE
-        wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
-        bash miniconda.sh -b -f -p $BASE/conda
-        rm -f miniconda.sh
-    elif [ $VERBOSE = true ]
-    then
-        green "Conda Already Installed" 
+function setup-conda-env()
+{
+    green "Configuring conda environment $NAME..."
+    source activate $NAME ||
+        (red "Could not activate environment $NAME..."
+         exit 1)
+
+    pip install -r requirements.txt ||
+        (red "Could not install botbot or its dependencies..."
+         red "Try running ./install.sh from the directory it's in."
+         exit 1)
+
+    if [ $INSTALL_TEST_SUITE -eq 1 ]; then
+        pip install -r test_requirements.txt ||
+            (red "Could not install test suite..."
+             exit 1)
     fi
-    if [ ! -d $BASE/conda/envs/$NAME ]
-    then
-        echo "Making the conda virtual environment named $NAME in $BASE"
-        conda remove -y --name $NAME --all
-        conda config --add envs_dirs $BASE/conda/envs
-        conda create -y -n $NAME --no-update-deps python=3.4 setuptools pip \
-            cython==0.22.1 nose six pyyaml yaml pyparsing python-dateutil pytz numpy \
-            scipy pandas matplotlib==1.4.3 numexpr patsy statsmodels pytables flask \
-            ipython mpmath pytest-cov psutil==3.4.2 jinja2 
-        #conda remove -y -n $NAME libgfortran --force
-        #conda install -y -n $NAME libgcc --force
-        conda install --no-update-deps -y -n $NAME -c http://conda.anaconda.org/omnia termcolor
-        conda install --no-update-deps -y -n $NAME -c http://conda.anaconda.org/cpcloud ipdb
-    elif [ $VERBOSE = true ]
-    then
-        green 'botbot Virtual Environment already installed'
+
+    source deactivate
+    green "Successfully set up environment $NAME..."
+}
+
+function create-dot-botbot-directory()
+{
+    green "Configuring base directory $BASE..."
+    if [ ! -d $BASE ]; then
+        echo "Creating $BASE..."
+        mkdir $BASE
     fi
+
+    echo "Creating default configuration..."
+    cp ./botbot/resources/botbot.conf $BASE
+
+    echo "Creating or updating file database..."
+    touch $BASE/filecache.sqlite
 }
 
+function on-success()
+{
+    green "Successfully installed in virtual environment $NAME!"
 
-function append_shared_bashrc {
-    # Appends a command to execute the shared bashrc to the users
-    # .bashrc script if the command is not already there
-    if [ $(cat ~/.bashrc | grep "source $BASE/.bashrc" | wc -l) -ne 1 ]; then 
-        echo "source $BASE/.bashrc" >> ~/.bashrc
-        red "Reload your bashrc or open a new shell to continue"
-    fi;
+    if [[ $CONDA_INSTALL_LOCAL -eq 1 ]]; then
+        red "However, it appears that conda needed to be installed locally."
+        echo "This means you will need to adjust your environment variables."
+        echo "To do this, run 'source setenv.sh' in this directory."
+        echo "Or, run '< setenv.sh >> ~/.bash_profile && source ~/.bash_profile' to set permanently."
+    fi
+
+    echo -n ""
+
+    echo "To use botbot, run 'source activate BotBot'."
+    echo "Check out the functionality with 'botbot -h'."
+    echo "When you're finished with BotBot, run 'source deactivate'."
+    green "Have fun!"
 }
 
-
-function install-inotify-wrapper {
-    pip install git+git://github.com/jackstanek/PyInotify#egg=inotify-0.2.7
+function do-everything()
+{
+    parse-args $@ &&
+        create-dot-botbot-directory &&
+        check-conda-install &&
+        make-conda-env &&
+        setup-conda-env &&
+        on-success &&
+        exit
 }
 
-function install-requirements {
-    pip install -r $SOURCE_DIR/requirements.txt
-}
-
-function install-botbot {
-    pip install git+git://github.com/jackstanek/PyInotify#egg=inotify-0.2.7
-    pip install -r $SOURCE_DIR/requirements.txt
-    pip install -e $SOURCE_DIR
-}
-
-append_shared_bashrc
-setup_shared_space
-install_conda
-
+do-everything $@

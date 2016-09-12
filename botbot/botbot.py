@@ -1,4 +1,4 @@
-"""Main method"""
+""
 import os
 import sys
 
@@ -27,8 +27,9 @@ def initialize_parser():
     ## Recheck options
     recheck = fs.add_mutually_exclusive_group()
     recheck.add_argument('-c', '--cached',
-                        action='store_true',
-                        help='Only return cached issues (no recheck)')
+                         action='store_true',
+                         help='Only return cached issues (no recheck)')
+
     recheck.add_argument('-k', '--force-recheck',
                         action='store_true',
                         help='Force a recheck of the tree')
@@ -43,6 +44,7 @@ def initialize_parser():
     fs.add_argument('-l', '--follow-symlinks',
                     help='Follow symlinks',
                     action='store_true')
+
     fs.add_argument('-m', '--me',
                     help='Only check files that belong to you',
                     action='store_true')
@@ -52,6 +54,10 @@ def initialize_parser():
                         help='Write report to a file instead of stdout')
 
     return parser
+
+def choose(namespace, attr, default=None):
+    d = vars(namespace)
+    return d.get(attr) is not None
 
 def run_file_check(args, outpath):
     # Import relevant file-checking checker code
@@ -70,17 +76,18 @@ def run_file_check(args, outpath):
     all_file_checks = checks.ALLCHECKS + schecks.ALLSCHECKS
     chkr.register(*all_file_checks)
 
-    # Set up default options
-    opt = {
-        'shared': args.shared if hasattr(args, 'shared') else True,
-        'link': args.follow_symlinks if hasattr(args, 'follow_symlinks') else False,
-        'verbose': args.verbose if hasattr(args, 'verbose') else False,
-        'force': args.force if hasattr(args, 'force') else False,
-        'me': args.me if hasattr(args, 'me') else False
+    # Get the options
+    opts = {
+        'shared': args.shared,
+        'link': args.follow_symlinks,
+        'verbose': args.verbose,
+        'cached': args.cached,
+        'force': args.force_recheck,
+        'me': args.me
     }
 
     # Run the checker!
-    chkr.check_all(path, **opt)
+    chkr.check_all(path, **opts)
 
 def run_env_check(args, outpath):
     # Import relevant environment checks

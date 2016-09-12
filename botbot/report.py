@@ -40,10 +40,6 @@ class ReporterBase():
     def _get_supporting_prob_info(self, probid):
         return problems.every_problem.get(probid)
 
-    def write_report(self, fmt, shared, attr='problems'):
-        """Write a report. This base is just a stub."""
-        pass
-
     def _get_env(self, template):
         tmppath = os.path.join(_DEFAULT_RES_PATH,
                                self._get_template_filename(template))
@@ -63,27 +59,53 @@ class OneshotReporter(ReporterBase):
 
     def _should_print_report(self, filelist):
         for values in filelist.values():
-            if len(values) > 0:
+            if values:
                 return True
         return False
 
+    def _get_pretty_sorted_problist(self, remove_shared=False):
+        ep = problems.every_problem
+        if self.chkr.checked:
+            return {
+                ep.get(probkey) if ep.get(probkey) else probkey:
+                [result for result in self.chkr.checked if probkey in result.problems]
+                for probkey in set.union(
+                        *(p.problems for p in self.chkr.checked)
+                )
+            }
+        else:
+            return {}
+
+    def _remove_shared_probs(self, pl):
+        i = 0
+        scodes = set(problems.shared_problems.keys())
+
+        while i < len(pl):
+            if set.intersection(scodes, pl[i].problems):
+                del pl[i]
+            else:
+                i += 1
+
     def write_report(self, fmt, shared, attr='problems'):
         """Write the summary of what transpired."""
-        filelist = self.chkr.db.get_files_by_attribute(self.chkr.path, attr, shared=shared)
 
-        # Prune unwanted listings
-        filelist = prune_empty_listings(filelist, attr)
+        # Remove shared issues if desired
+        checked = self.chkr.checked
         if not shared:
-            filelist = prune_shared_probs(filelist, attr)
+            self._remove_shared_probs(checked)
 
-        if self._should_print_report(filelist):
+        # Format the list for easy templating :)
+        printlist = self._get_pretty_sorted_problist()
+
+        if self._should_print_report(printlist):
             env = self._get_env(_GENERIC_REPORT_NAME)
 
-            tempgen = env.get_template(_GENERIC_REPORT_NAME).generate({
-                'attr': attr,
-                'values': filelist,
-                'status': self.chkr.status
-            })
+            tempgen = env.get_template(_GENERIC_REPORT_NAME).generate(
+                {
+                    'pl': printlist,
+                    'status': self.chkr.status
+                }
+            )
 
             if self.out != sys.stdout:
                 print('Writing report to {}.'.format(self.out))
@@ -100,49 +122,6 @@ class OneshotReporter(ReporterBase):
 
         else:
             print('No problems here!')
-
-def prune_shared_probs(fl, attr):
-    """Remove shared problem listings"""
-    shared_probs = ('PROB_DIR_NOT_WRITABLE',
-                    'PROB_FILE_NOT_GRPRD',
-                    'PROB_FILE_NOT_GRPEXEC',
-                    'PROB_DIR_NOT_WRITABLE',
-                    'PROB_DIR_NOT_ACCESSIBLE')
-    pruned = dict()
-    if attr == 'problems':
-        for key, val in fl.items():
-            if key not in shared_probs:
-                pruned[key] = val
-    else:
-        for key, val in fl.items():
-            pruned[key] = []
-            for fi in val:
-                sps, fips = set(shared_probs), set(fi['problems'])
-
-                spc = len(set.intersection(sps, fips))
-                if spc != len(fips):
-                    pruned[key].append(fi)
-
-    return pruned
-
-def prune_empty_listings(fl, attr):
-    """Return a new dictionary with empty listings removed"""
-
-    new = dict()
-    if attr == 'problems':
-        for key, value in fl.items():
-            if len(value) > 0:
-                new[key] = value
-    else:
-        for key, val in fl.items():
-            for fi in val:
-                if len(fi['problems']) > 0:
-                    if key in new:
-                        new[key].append(fi)
-                    else:
-                        new[key] = [fi]
-
-    return new
 
 class DaemonReporter(ReporterBase):
     """Reports issues in daemon mode"""
